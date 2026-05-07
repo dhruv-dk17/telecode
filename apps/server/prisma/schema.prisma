@@ -1,0 +1,78 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String       @id @default(uuid())
+  telegramId   String       @unique
+  username     String?
+  firstName    String?
+  lastName     String?
+  githubToken  String?
+  githubLogin  String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  repositories Repository[]
+  sessions     Session[]
+  tasks        Task[]
+}
+
+model Repository {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  fullName    String   // e.g. "owner/repo"
+  defaultBranch String @default("main")
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       Task[]
+
+  @@unique([userId, fullName])
+}
+
+model Session {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  context     String   // JSON blob of session context / memory
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Task {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id])
+  repositoryId String?
+  repository   Repository? @relation(fields: [repositoryId], references: [id])
+  mode         TaskMode   @default(EXPLAIN)
+  status       TaskStatus @default(PENDING)
+  prompt       String
+  result       String?
+  branchName   String?
+  prUrl        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+enum TaskMode {
+  EXPLAIN
+  PLAN
+  EXECUTE
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  ROLLED_BACK
+}

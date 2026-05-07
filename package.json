@@ -1,0 +1,16 @@
+{
+  "name": "telecode",
+  "version": "1.0.0",
+  "description": "Telecode Monorepo",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "docker-compose up -d",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  }
+}
