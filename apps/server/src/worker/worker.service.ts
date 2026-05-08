@@ -34,7 +34,8 @@ export class WorkerService {
     let retries = 3;
     while (retries > 0) {
       try {
-        await firstValueFrom(
+        this.logger.debug(`Dispatching task ${task.id} to worker at ${this.workerUrl}... Payload: ${JSON.stringify(payload)}`);
+        const response = await firstValueFrom(
           this.http.post(`${this.workerUrl}/process`, payload, {
             headers: {
               'X-Worker-Secret': this.workerSecret,
@@ -44,12 +45,14 @@ export class WorkerService {
             timeout: 10_000,
           }),
         );
-        this.logger.log(`Dispatched task ${task.id} (${task.mode}) to worker`);
+        this.logger.log(`✅ Successfully dispatched task ${task.id} (${task.mode}) to worker. Status: ${response.status}`);
         return true;
       } catch (err: any) {
         retries--;
+        const status = err?.response?.status;
+        const message = err?.response?.data?.message || err?.message;
         this.logger.warn(
-          `Failed to dispatch task ${task.id} to worker (retries left: ${retries}): ${err?.message}`,
+          `⚠️ Failed to dispatch task ${task.id} to worker (Status: ${status}, Retries left: ${retries}): ${message}`,
         );
         if (retries > 0) {
           await new Promise((resolve) => setTimeout(resolve, 2000 * (3 - retries)));
@@ -61,11 +64,19 @@ export class WorkerService {
 
   async healthCheck(): Promise<boolean> {
     try {
+      this.logger.debug(`Checking worker health at ${this.workerUrl}/health...`);
       const res = await firstValueFrom(
         this.http.get(`${this.workerUrl}/health`, { timeout: 5_000 }),
       );
-      return res.data?.status === 'ok';
-    } catch {
+      const isOk = res.data?.status === 'ok';
+      if (isOk) {
+        this.logger.log(`🟢 Worker health check passed`);
+      } else {
+        this.logger.warn(`🔴 Worker health check failed: Unexpected status ${res.data?.status}`);
+      }
+      return isOk;
+    } catch (err: any) {
+      this.logger.error(`🔴 Worker health check failed: ${err.message}`);
       return false;
     }
   }

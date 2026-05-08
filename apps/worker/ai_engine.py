@@ -4,8 +4,8 @@ ai_engine.py — Gemini-powered AI processing for each TaskMode.
 Modes:
   EXPLAIN  → Read-only. Answers questions about code / concepts.
   PLAN     → Generates a step-by-step implementation plan for a feature.
-  EXECUTE  → (Phase 4) Will actually run code changes via the GitHub API.
-             For now returns a structured plan + a simulated branch name.
+  EXECUTE  → (Phase 3) Actionable AI. Returns a structured code change plan
+             and creates a simulated pull request with full file contents.
 """
 
 from google import genai
@@ -41,6 +41,14 @@ The user wants to understand code, a concept, or get a quick answer.
 - Use code blocks with language hints for all code examples.
 - End with a one-line "Key takeaway: ..." summary."""
 
+_SYSTEM_SEARCH = _SYSTEM_BASE + """
+
+Your current mode is SEARCH.
+Your goal is to look at the repository file tree and identify the most relevant files to read to answer the user's question.
+Return ONLY a JSON list of file paths. No other text.
+Example: ["src/main.ts", "package.json"]
+"""
+
 _SYSTEM_PLAN = _SYSTEM_BASE + """
 
 Your current mode is PLAN.
@@ -65,25 +73,69 @@ How to verify the feature is working correctly."""
 _SYSTEM_EXECUTE = _SYSTEM_BASE + """
 
 Your current mode is EXECUTE.
-The user wants you to actually implement a code change.
-Produce a detailed explanation and then a JSON block containing the file changes.
+The user wants you to implement a code change. 
+You must produce:
+1. A detailed explanation of what you are changing and why.
+2. A branch name starting with `telecode/`.
+3. A concise commit message.
+4. A JSON block containing the changes.
 
-Format your response as:
-1. A detailed description of the change.
-2. The suggested branch name (format: telecode/<short-kebab-description>)
-3. The suggested commit message (feat: ...)
-4. A JSON block inside a code fence labeled `json` with this structure:
+Output structure:
+---
+[Your detailed explanation here]
+
+**Branch:** `telecode/short-description`
+**Commit:** `feat: description`
+
+```json
 {
-  "branch": "telecode/...",
-  "commit": "feat: ...",
+  "branch": "telecode/short-description",
+  "commit": "feat: description",
   "files": [
-    {"path": "src/app.ts", "content": "..."},
-    ...
+    {
+      "path": "path/to/file.ts",
+      "content": "FULL file content here. NO TRUNCATION. NO '...'"
+    }
   ]
 }
+```
 
-Important: Provide FULL file contents in the JSON, not diffs.
-"""
+CRITICAL: 
+- ALWAYS provide the FULL content of the file. 
+- If you are modifying an existing file, you MUST include all its original content plus your changes. 
+- Use valid JSON. Double check your quotes and braces."""
+
+
+def _extract_json(text: str) -> dict | None:
+    """Helper to extract and parse the first JSON block from text."""
+    import json
+    import re
+
+    # 1. Try to find content within ```json ... ``` blocks
+    json_blocks = re.findall(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
+    
+    # 2. If no fenced blocks, try to find the largest { ... } block
+    if not json_blocks:
+        json_blocks = re.findall(r"(\{.*?\})", text, re.DOTALL)
+
+    if not json_blocks:
+        return None
+
+    # Try to parse the largest block found (usually the one with the actual data)
+    # Sort by length descending
+    json_blocks.sort(key=len, reverse=True)
+
+    for block in json_blocks:
+        try:
+            # Clean up common AI artifacts
+            cleaned = block.strip()
+            # Remove trailing commas if present (invalid JSON)
+            cleaned = re.sub(r",\s*([\]}])", r"\1", cleaned)
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            continue
+            
+    return None
 
 
 def _build_context(repo_full_name: str | None, repo_branch: str | None) -> str:
@@ -117,15 +169,38 @@ async def process_task(
     }
     system_instruction = system_map.get(mode, _SYSTEM_EXPLAIN)
 
-    if mode == "SEARCH" and repo_full_name:
+    # ─── Context Injection ────────────────────────────────────────────────────
+    gh = None
+    if repo_full_name:
         from github_client import GitHubClient
         gh = GitHubClient()
+        
+        # 1. Always provide the file tree if we have a repo
         file_tree = await gh.get_file_tree(repo_full_name, repo_default_branch or "main")
         tree_str = "\n".join(file_tree)
-        prompt = f"Codebase Structure:\n```\n{tree_str}\n```\n\nUser Query: {prompt}"
+        prompt = f"Codebase Structure:\n```\n{tree_str}\n```\n\n{prompt}"
+
+        # 2. Try to find files mentioned in the prompt and fetch them (for all modes)
+        import re
+        # Simple heuristic: find things that look like file paths in the prompt
+        # matches words containing dots, like 'main.ts', 'src/app.py', etc.
+        potential_files = re.findall(r"[\w/\-]+\.[\w]+", prompt)
+        
+        # Filter to only include files that actually exist in the tree
+        files_to_read = [f for f in potential_files if f in file_tree]
+        
+        if files_to_read:
+            context_files = []
+            for file_path in set(files_to_read): # use set to avoid duplicates
+                content = await gh.get_file_content(repo_full_name, file_path, repo_default_branch or "main")
+                if content:
+                    context_files.append(f"File: `{file_path}`\nContent:\n```\n{content}\n```")
+            
+            if context_files:
+                files_str = "\n\n".join(context_files)
+                prompt = f"Relevant File Context:\n{files_str}\n\n---\n\n{prompt}"
 
     context = _build_context(repo_full_name, repo_default_branch)
-
     user_message = f"{context}\n\n---\n\n{prompt}"
 
     response = await client.aio.models.generate_content(
@@ -134,7 +209,7 @@ async def process_task(
         config=genai_types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.4,
-            max_output_tokens=2048,
+            max_output_tokens=4096, # Increased for code generation
         ),
     )
 
@@ -146,19 +221,12 @@ async def process_task(
     commit_message: str = "feat: telecode update"
 
     if mode == "EXECUTE":
-        import json
         import re
-        
-        # Try to find JSON block
-        json_match = re.search(r"```json\s*(\{.*?\})\s*```", result_text, re.DOTALL)
-        if json_match:
-            try:
-                data = json.loads(json_match.group(1))
-                branch_name = data.get("branch")
-                commit_message = data.get("commit", commit_message)
-                files_to_commit = data.get("files", [])
-            except json.JSONDecodeError:
-                pass
+        data = _extract_json(result_text)
+        if data:
+            branch_name = data.get("branch")
+            commit_message = data.get("commit", commit_message)
+            files_to_commit = data.get("files", [])
 
         # Fallback for branch name if JSON parsing failed or was incomplete
         if not branch_name:

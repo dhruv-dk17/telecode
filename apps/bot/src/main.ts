@@ -41,6 +41,7 @@ bot.start(async (ctx) => {
     `I'm your AI coding continuity agent. Here's what I can do:\n\n` +
     `📋 */connect* \`owner/repo\` — link a GitHub repo\n` +
     `🔍 */explain* \`<question>\` — explain code / answer questions\n` +
+    `🔎 */search* \`<query>\` — search for files/code in the repo\n` +
     `🗺 */plan* \`<feature>\` — plan a feature implementation\n` +
     `⚡ */execute* \`<task>\` — execute a safe code change\n` +
     `↩️ */undo* — roll back the last task\n` +
@@ -57,6 +58,7 @@ bot.help(async (ctx) => {
     `*Telecode Commands*\n\n` +
     `📋 */connect* \`owner/repo\` — Link a GitHub repository\n` +
     `🔍 */explain* \`<question>\` — Get code explanations (read-only)\n` +
+    `🔎 */search* \`<query>\` — Search for files or code logic\n` +
     `🗺 */plan* \`<feature>\` — Generate an implementation plan\n` +
     `⚡ */execute* \`<task>\` — Run an AI code change (creates a branch + PR)\n` +
     `↩️ */undo* — Revert the last completed task\n` +
@@ -110,6 +112,37 @@ bot.command('repos', async (ctx) => {
   }
 });
 
+bot.command('search', async (ctx) => {
+  const prompt = ctx.message.text.split(' ').slice(1).join(' ').trim();
+  if (!prompt) return ctx.reply('Usage: `/search <your query>`', { parse_mode: 'Markdown' });
+
+  const user = await ensureUser(ctx.from.id, ctx.from).catch(() => null);
+  if (!user) return ctx.reply('⚠️ Could not reach the server.');
+
+  const activeRepo = await api.getActiveRepo(user.id).catch(() => null);
+
+  await ctx.reply(`🔎 *Search mode* — hunting for information...\n\n_"${prompt}"_`, { parse_mode: 'Markdown' });
+
+  try {
+    if (!ctx.chat) return;
+    const task = await api.submitTask({
+      userId: user.id,
+      repositoryId: activeRepo?.id,
+      mode: 'SEARCH',
+      prompt,
+      botToken,
+      chatId: String(ctx.chat.id),
+    });
+    await ctx.reply(
+      `🔍 *Phase 2: Knowledge Extraction* — ID: \`${task.id}\`\n` +
+      `_(The AI is searching the repository. I'll post the results here shortly.)_`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err: any) {
+    await ctx.reply(`❌ Error: ${err?.response?.data?.message ?? err.message}`);
+  }
+});
+
 /** /explain <question> — EXPLAIN mode (read-only) */
 bot.command('explain', async (ctx) => {
   const prompt = ctx.message.text.split(' ').slice(1).join(' ').trim();
@@ -123,6 +156,7 @@ bot.command('explain', async (ctx) => {
   await ctx.reply(`🔍 *Explain mode* — analysing your question...\n\n_"${prompt}"_`, { parse_mode: 'Markdown' });
 
   try {
+    if (!ctx.chat) return;
     const task = await api.submitTask({
       userId: user.id,
       repositoryId: activeRepo?.id,
@@ -132,9 +166,8 @@ bot.command('explain', async (ctx) => {
       chatId: String(ctx.chat.id),
     });
     await ctx.reply(
-      `📋 Task created! ID: \`${task.id}\`\n` +
-      `Status: \`${task.status}\`\n\n` +
-      `_(AI worker will process this and respond here — coming in Phase 3)_`,
+      `🧠 *Phase 2: Knowledge Extraction* — ID: \`${task.id}\`\n` +
+      `_(AI worker is analyzing your question. I'll post the response here once ready.)_`,
       { parse_mode: 'Markdown' }
     );
   } catch (err: any) {
@@ -161,6 +194,7 @@ bot.command('plan', async (ctx) => {
   );
 
   try {
+    if (!ctx.chat) return;
     const task = await api.submitTask({
       userId: user.id,
       repositoryId: activeRepo.id,
@@ -170,8 +204,8 @@ bot.command('plan', async (ctx) => {
       chatId: String(ctx.chat.id),
     });
     await ctx.reply(
-      `📋 Plan task queued! ID: \`${task.id}\`\n` +
-      `_(AI worker will generate the plan and post it here — coming in Phase 3)_`,
+      `📋 *Phase 3: Planning* — ID: \`${task.id}\`\n` +
+      `_(The implementation strategy is being generated. Hang tight!)_`,
       { parse_mode: 'Markdown' }
     );
   } catch (err: any) {
@@ -218,6 +252,7 @@ bot.action(/^exec_confirm:(.+):(.+):(.+)$/, async (ctx) => {
   const prompt = decodeURIComponent(encodedPrompt);
 
   try {
+    if (!ctx.chat) return;
     const task = await api.submitTask({
       userId,
       repositoryId,
@@ -227,7 +262,7 @@ bot.action(/^exec_confirm:(.+):(.+):(.+)$/, async (ctx) => {
       chatId: String(ctx.chat.id),
     });
     await ctx.editMessageText(
-      `⚡ Execute task submitted!\nID: \`${task.id}\`\n\n_(AI worker will run this in a sandbox and post the PR link here)_`,
+      `⚡ *Phase 3: Actionable AI* initiated!\nID: \`${task.id}\`\n\n_(The AI is preparing code changes and creating a PR. You'll be notified when it's live.)_`,
       { parse_mode: 'Markdown' }
     );
   } catch (err: any) {
@@ -291,6 +326,7 @@ bot.on(message('text'), async (ctx) => {
   );
 
   try {
+    if (!ctx.chat) return;
     await api.submitTask({
       userId: user.id,
       repositoryId: activeRepo?.id,

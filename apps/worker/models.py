@@ -7,6 +7,7 @@ class TaskMode(str, Enum):
     EXPLAIN = "EXPLAIN"
     PLAN = "PLAN"
     EXECUTE = "EXECUTE"
+    SEARCH = "SEARCH"
 
 
 class TaskStatus(str, Enum):
