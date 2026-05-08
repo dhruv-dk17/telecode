@@ -33,5 +33,11 @@ export class UsersService {
       where: { telegramId },
     });
   }
+
+  async findByApiToken(apiToken: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { apiToken },
+    });
+  }
 }
 

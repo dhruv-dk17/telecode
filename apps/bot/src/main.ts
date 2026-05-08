@@ -1,6 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import 'dotenv/config';
+console.log('🚀 Starting bot script...');
 import { ApiService } from './api.service';
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
@@ -359,11 +360,11 @@ bot.on(message('text'), async (ctx) => {
 });
 
 // ─── Launch ──────────────────────────────────────────────────────────────────
-
+console.log('⏳ Launching bot...');
 bot.launch().then(() => {
   console.log('🤖 Telecode Bot is running!');
 }).catch((err) => {
-  console.error('Failed to launch bot:', err);
+  console.error('❌ Failed to launch bot:', err);
   process.exit(1);
 });
 

@@ -23,7 +23,7 @@ export class SyncCodesService {
     return code;
   }
 
-  async validateAndExchange(code: string): Promise<string | null> {
+  async validateAndExchange(code: string): Promise<{ apiToken: string; user: any } | null> {
     const syncCode = await this.prisma.syncCode.findUnique({
       where: { code },
       include: { user: true },
@@ -46,6 +46,6 @@ export class SyncCodesService {
       where: { id: syncCode.id },
     });
 
-    return apiToken;
+    return { apiToken, user: syncCode.user };
   }
 }

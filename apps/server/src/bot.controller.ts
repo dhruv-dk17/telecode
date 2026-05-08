@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import axios from 'axios';
 import { UsersService } from './users/users.service';
 import { RepositoriesService } from './repositories/repositories.service';
 import { TasksService, CreateTaskDto } from './tasks/tasks.service';
@@ -144,6 +145,16 @@ export class BotController {
     return { tasks };
   }
 
+  @Get('tasks/token/:apiToken')
+  async listTasksByToken(@Param('apiToken') apiToken: string) {
+    const user = await this.users.findByApiToken(apiToken);
+    if (!user) {
+      return { tasks: [] };
+    }
+    const tasks = await this.tasks.findAllForUser(user.id);
+    return { tasks };
+  }
+
   @Get('tasks/:userId/last')
   async lastTask(@Param('userId') userId: string) {
     const task = await this.tasks.getLastTask(userId);
@@ -187,10 +198,27 @@ export class BotController {
   @Post('sync/exchange')
   @HttpCode(HttpStatus.OK)
   async exchangeSyncCode(@Body() body: { code: string }) {
-    const apiToken = await this.syncCodes.validateAndExchange(body.code);
-    if (!apiToken) {
+    const result = await this.syncCodes.validateAndExchange(body.code);
+    if (!result) {
       return { error: 'Invalid or expired code' };
     }
+
+    const { apiToken, user } = result;
+
+    // Notify user via Telegram bot
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (botToken && user.telegramId) {
+      try {
+        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          chat_id: user.telegramId,
+          text: `✅ *Sync Successful!*\n\nYour VS Code extension is now connected to this account. You can start sending tasks from your editor.`,
+          parse_mode: 'Markdown',
+        });
+      } catch (err) {
+        console.error('Failed to send Telegram notification:', err.response?.data || err.message);
+      }
+    }
+
     return { apiToken };
   }
 }
