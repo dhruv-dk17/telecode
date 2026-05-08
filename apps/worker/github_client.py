@@ -61,3 +61,21 @@ class GitHubClient:
         repo = self._get_repo(repo_full_name)
         pr = repo.create_pull(title=title, body=body, head=head, base=base)
         return pr.html_url
+
+    async def get_file_tree(self, repo_full_name: str, branch: str = "main"):
+        """Returns the file tree of the repository as a list of paths."""
+        repo = self._get_repo(repo_full_name)
+        # We use the branch name to get the latest tree
+        tree = repo.get_git_tree(branch, recursive=True)
+        return [item.path for item in tree.tree if item.type == "blob"]
+
+    async def get_file_content(self, repo_full_name: str, file_path: str, branch: str = "main"):
+        """Returns the content of a specific file."""
+        repo = self._get_repo(repo_full_name)
+        try:
+            file_content = repo.get_contents(file_path, ref=branch)
+            if isinstance(file_content, list):
+                return None # It's a directory
+            return file_content.decoded_content.decode("utf-8")
+        except Exception:
+            return None

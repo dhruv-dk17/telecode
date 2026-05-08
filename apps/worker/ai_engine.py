@@ -113,8 +113,17 @@ async def process_task(
         "EXPLAIN": _SYSTEM_EXPLAIN,
         "PLAN": _SYSTEM_PLAN,
         "EXECUTE": _SYSTEM_EXECUTE,
+        "SEARCH": _SYSTEM_SEARCH,
     }
     system_instruction = system_map.get(mode, _SYSTEM_EXPLAIN)
+
+    if mode == "SEARCH" and repo_full_name:
+        from github_client import GitHubClient
+        gh = GitHubClient()
+        file_tree = await gh.get_file_tree(repo_full_name, repo_default_branch or "main")
+        tree_str = "\n".join(file_tree)
+        prompt = f"Codebase Structure:\n```\n{tree_str}\n```\n\nUser Query: {prompt}"
+
     context = _build_context(repo_full_name, repo_default_branch)
 
     user_message = f"{context}\n\n---\n\n{prompt}"
