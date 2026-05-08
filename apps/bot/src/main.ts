@@ -286,6 +286,24 @@ bot.command('undo', async (ctx) => {
   }
 });
 
+/** /sync — generate a code for VS Code extension */
+bot.command('sync', async (ctx) => {
+  const user = await ensureUser(ctx.from.id, ctx.from).catch(() => null);
+  if (!user) return ctx.reply('⚠️ Could not reach the server.');
+
+  try {
+    const code = await api.generateSyncCode(user.id);
+    await ctx.reply(
+      `🔑 Your sync code: \`${code}\`\n\n` +
+      `Enter this code in your VS Code Telecode extension to link your account.\n` +
+      `This code will expire in 10 minutes.`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err: any) {
+    await ctx.reply(`❌ Failed to generate code: ${err?.response?.data?.message ?? err.message}`);
+  }
+});
+
 /** /tasks — recent history */
 bot.command('tasks', async (ctx) => {
   const user = await ensureUser(ctx.from.id, ctx.from).catch(() => null);

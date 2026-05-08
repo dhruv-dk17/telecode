@@ -85,4 +85,9 @@ export class ApiService {
     });
     return res.data.task;
   }
+
+  async generateSyncCode(userId: string) {
+    const res = await this.http.post('/bot/sync/generate', { userId });
+    return res.data.code;
+  }
 }

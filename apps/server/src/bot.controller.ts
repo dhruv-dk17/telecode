@@ -11,6 +11,7 @@ import { UsersService } from './users/users.service';
 import { RepositoriesService } from './repositories/repositories.service';
 import { TasksService, CreateTaskDto } from './tasks/tasks.service';
 import { WorkerService } from './worker/worker.service';
+import { SyncCodesService } from './users/sync-codes.service';
 import { TaskMode, TaskStatus } from '@prisma/client';
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ export class BotController {
     private readonly repos: RepositoriesService,
     private readonly tasks: TasksService,
     private readonly worker: WorkerService,
+    private readonly syncCodes: SyncCodesService,
   ) {}
 
   // ─ Users ─────────────────────────────────────────────────────────────────
@@ -173,5 +175,22 @@ export class BotController {
   ) {
     const task = await this.tasks.rollback(id, body.userId);
     return { task };
+  }
+
+  @Post('sync/generate')
+  @HttpCode(HttpStatus.OK)
+  async generateSyncCode(@Body() body: { userId: string }) {
+    const code = await this.syncCodes.generate(body.userId);
+    return { code };
+  }
+
+  @Post('sync/exchange')
+  @HttpCode(HttpStatus.OK)
+  async exchangeSyncCode(@Body() body: { code: string }) {
+    const apiToken = await this.syncCodes.validateAndExchange(body.code);
+    if (!apiToken) {
+      return { error: 'Invalid or expired code' };
+    }
+    return { apiToken };
   }
 }

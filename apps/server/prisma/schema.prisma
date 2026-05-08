@@ -17,11 +17,22 @@ model User {
   lastName     String?
   githubToken  String?
   githubLogin  String?
+  apiToken     String?      @unique
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   repositories Repository[]
   sessions     Session[]
   tasks        Task[]
+  syncCodes    SyncCode[]
+}
+
+model SyncCode {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }
 
 model Repository {
