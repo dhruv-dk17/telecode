@@ -61,7 +61,7 @@ class TaskItem extends vscode.TreeItem {
     
     if (this.status === 'COMPLETED') {
       this.iconPath = new vscode.ThemeIcon('check');
-    } else if (this.status === 'RUNNING') {
+    } else if (this.status === 'IN_PROGRESS') {
       this.iconPath = new vscode.ThemeIcon('sync~spin');
     } else {
       this.iconPath = new vscode.ThemeIcon('circle-outline');

@@ -62,12 +62,23 @@ class GitHubClient:
         pr = repo.create_pull(title=title, body=body, head=head, base=base)
         return pr.html_url
 
-    async def get_file_tree(self, repo_full_name: str, branch: str = "main"):
+    async def get_file_tree(self, repo_full_name: str, branch: str = None):
         """Returns the file tree of the repository as a list of paths."""
         repo = self._get_repo(repo_full_name)
-        # We use the branch name to get the latest tree
-        tree = repo.get_git_tree(branch, recursive=True)
-        return [item.path for item in tree.tree if item.type == "blob"]
+        
+        # Use provided branch or fall back to repository's default branch
+        target_branch = branch or repo.default_branch
+        print(f"🌳 Fetching file tree for {repo_full_name} on branch: {target_branch}")
+        
+        try:
+            tree = repo.get_git_tree(target_branch, recursive=True)
+            return [item.path for item in tree.tree if item.type == "blob"]
+        except GithubException as e:
+            if e.status == 404 and branch and branch != repo.default_branch:
+                print(f"⚠️ Branch '{branch}' not found. Falling back to default branch: {repo.default_branch}")
+                tree = repo.get_git_tree(repo.default_branch, recursive=True)
+                return [item.path for item in tree.tree if item.type == "blob"]
+            raise e
 
     async def get_file_content(self, repo_full_name: str, file_path: str, branch: str = "main"):
         """Returns the content of a specific file."""

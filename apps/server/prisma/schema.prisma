@@ -79,6 +79,7 @@ enum TaskMode {
   PLAN
   EXECUTE
   SEARCH
+  FIX
 }
 
 enum TaskStatus {

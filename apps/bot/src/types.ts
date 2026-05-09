@@ -1,5 +1,5 @@
 /** Mirrors TaskMode enum from Prisma schema */
-export type TaskMode = 'EXPLAIN' | 'PLAN' | 'EXECUTE' | 'SEARCH';
+export type TaskMode = 'EXPLAIN' | 'PLAN' | 'EXECUTE' | 'SEARCH' | 'FIX';
 
 /** Mirrors TaskStatus enum from Prisma schema */
 export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'ROLLED_BACK';

@@ -44,10 +44,14 @@ The user wants to understand code, a concept, or get a quick answer.
 _SYSTEM_SEARCH = _SYSTEM_BASE + """
 
 Your current mode is SEARCH.
-Your goal is to look at the repository file tree and identify the most relevant files to read to answer the user's question.
-Return ONLY a JSON list of file paths. No other text.
-Example: ["src/main.ts", "package.json"]
-"""
+Your goal is to look at the repository file tree and help the user find where specific logic or features are implemented.
+
+Provide a helpful, organized analysis:
+1. **🔍 Direct Matches**: The exact files (with paths) where the requested logic likely resides.
+2. **🔗 Related Files**: Other files (configs, tests, or imports) that might be affected or provide useful context.
+3. **💡 Reasoning**: A brief, conversational explanation of why these files are relevant and how they interact.
+
+Keep the response focused and under 250 words. If multiple paths are possible, mention the most likely one first."""
 
 _SYSTEM_PLAN = _SYSTEM_BASE + """
 
@@ -91,6 +95,42 @@ Output structure:
 {
   "branch": "telecode/short-description",
   "commit": "feat: description",
+  "files": [
+    {
+      "path": "path/to/file.ts",
+      "content": "FULL file content here. NO TRUNCATION. NO '...'"
+    }
+  ]
+}
+```
+
+CRITICAL: 
+- ALWAYS provide the FULL content of the file. 
+- If you are modifying an existing file, you MUST include all its original content plus your changes. 
+- Use valid JSON. Double check your quotes and braces."""
+
+_SYSTEM_FIX = _SYSTEM_BASE + """
+
+Your current mode is FIX.
+The user wants you to fix a bug or an error in the code.
+You must produce:
+1. A brief analysis of the cause of the bug.
+2. A detailed explanation of the fix.
+3. A branch name starting with `telecode/fix-`.
+4. A concise commit message starting with `fix:`.
+5. A JSON block containing the changes.
+
+Output structure:
+---
+[Your analysis and fix explanation here]
+
+**Branch:** `telecode/fix-description`
+**Commit:** `fix: description`
+
+```json
+{
+  "branch": "telecode/fix-description",
+  "commit": "fix: description",
   "files": [
     {
       "path": "path/to/file.ts",
@@ -166,6 +206,7 @@ async def process_task(
         "PLAN": _SYSTEM_PLAN,
         "EXECUTE": _SYSTEM_EXECUTE,
         "SEARCH": _SYSTEM_SEARCH,
+        "FIX": _SYSTEM_FIX,
     }
     system_instruction = system_map.get(mode, _SYSTEM_EXPLAIN)
 
@@ -176,22 +217,31 @@ async def process_task(
         gh = GitHubClient()
         
         # 1. Always provide the file tree if we have a repo
-        file_tree = await gh.get_file_tree(repo_full_name, repo_default_branch or "main")
-        tree_str = "\n".join(file_tree)
+        file_tree = []
+        try:
+            file_tree = await gh.get_file_tree(repo_full_name, repo_default_branch)
+        except Exception as e:
+            print(f"❌ Failed to fetch file tree for context: {str(e)}")
+        
+        tree_str = "\n".join(file_tree) if file_tree else "Unavailable"
         prompt = f"Codebase Structure:\n```\n{tree_str}\n```\n\n{prompt}"
 
-        # 2. Try to find files mentioned in the prompt and fetch them (for all modes)
-        import re
-        # Simple heuristic: find things that look like file paths in the prompt
-        # matches words containing dots, like 'main.ts', 'src/app.py', etc.
-        potential_files = re.findall(r"[\w/\-]+\.[\w]+", prompt)
+        # 2. Automatically fetch high-priority files (README, package.json, etc.)
+        high_priority = ["README.md", "package.json", "requirements.txt", "main.py", "index.ts"]
+        existing_high_priority = [f for f in high_priority if f in file_tree]
         
-        # Filter to only include files that actually exist in the tree
-        files_to_read = [f for f in potential_files if f in file_tree]
+        # 3. Detect files mentioned in the prompt
+        import re
+        # Improved regex to catch paths like apps/server/src/main.ts or ./src/utils.js
+        mentioned_files = re.findall(r"(?:(?:\./|/)?[\w\-]+(?:/[\w\-]+)*\.(?:ts|js|py|md|json|html|css|prisma|graphql|yml|yaml|txt))", prompt)
+        
+        # Combine and deduplicate
+        files_to_read = list(set(existing_high_priority + [f.lstrip("./") for f in mentioned_files if f.lstrip("./") in file_tree]))
         
         if files_to_read:
+            print(f"[AI Context] Fetching {len(files_to_read)} files for context: {files_to_read}")
             context_files = []
-            for file_path in set(files_to_read): # use set to avoid duplicates
+            for file_path in files_to_read:
                 content = await gh.get_file_content(repo_full_name, file_path, repo_default_branch or "main")
                 if content:
                     context_files.append(f"File: `{file_path}`\nContent:\n```\n{content}\n```")
@@ -220,7 +270,7 @@ async def process_task(
     files_to_commit: list[dict] = []
     commit_message: str = "feat: telecode update"
 
-    if mode == "EXECUTE":
+    if mode in ["EXECUTE", "FIX"]:
         import re
         data = _extract_json(result_text)
         if data:

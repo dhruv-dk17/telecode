@@ -1,8 +1,17 @@
 import { Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import 'dotenv/config';
+import * as crypto from 'crypto';
 console.log('🚀 Starting bot script...');
 import { ApiService } from './api.service';
+
+// ── Pending Executions Store ────────────────────────────────────────────────
+// Stores prompts temporarily to avoid Telegram's 64-byte callback_data limit
+const pendingExecutions = new Map<string, { 
+  userId: string; 
+  repositoryId: string; 
+  prompt: string; 
+}>();
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
 
@@ -14,6 +23,21 @@ if (!botToken) {
 
 const bot = new Telegraf(botToken);
 const api = new ApiService();
+
+// ─── Middleware ──────────────────────────────────────────────────────────────
+
+bot.use(async (ctx, next) => {
+  const start = Date.now();
+  const updateType = ctx.updateType;
+  const from = ctx.from ? `@${ctx.from.username || ctx.from.id}` : 'unknown';
+  
+  console.log(`📩 Received update [${updateType}] from ${from}`);
+  
+  await next();
+  
+  const ms = Date.now() - start;
+  console.log(`✅ Handled update in ${ms}ms`);
+});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -32,60 +56,66 @@ async function ensureUser(telegramId: number, from: any) {
 
 // ─── Commands ────────────────────────────────────────────────────────────────
 
-/** /start — welcome + register user */
 bot.start(async (ctx) => {
   const user = await ensureUser(ctx.from.id, ctx.from).catch(() => null);
   const name = user ? formatUser(user) : ctx.from.first_name;
 
   await ctx.reply(
-    `👋 Welcome to *Telecode*, ${name}!\n\n` +
-    `I'm your AI coding continuity agent. Here's what I can do:\n\n` +
-    `📋 */connect* \`owner/repo\` — link a GitHub repo\n` +
-    `🔍 */explain* \`<question>\` — explain code / answer questions\n` +
-    `🔎 */search* \`<query>\` — search for files/code in the repo\n` +
-    `🗺 */plan* \`<feature>\` — plan a feature implementation\n` +
-    `⚡ */execute* \`<task>\` — execute a safe code change\n` +
-    `↩️ */undo* — roll back the last task\n` +
-    `📂 */repos* — list connected repositories\n` +
-    `📜 */tasks* — show recent task history\n` +
-    `❓ */help* — show this message`,
-    { parse_mode: 'Markdown' }
+    `👋 Welcome to <b>Telecode</b>, ${name}!\n\n` +
+    `I'm your AI coding continuity agent. I help you manage your code from anywhere.\n\n` +
+    `<b>Core Capabilities:</b>\n` +
+    `🔍 <b>/explain</b> — Deep code analysis\n` +
+    `🔎 <b>/search</b> — Semantic file search\n` +
+    `🔧 <b>/fix</b> — Quick bug fixes\n` +
+    `🗺 <b>/plan</b> — Feature strategy\n` +
+    `⚡ <b>/execute</b> — Automated code changes\n\n` +
+    `<b>Setup:</b>\n` +
+    `📋 <b>/connect</b> <code>owner/repo</code>\n` +
+    `📂 <b>/repos</b> — Your linked repositories\n\n` +
+    `📜 <b>/tasks</b> — History\n` +
+    `↩️ <b>/undo</b> — Rollback\n` +
+    `❓ <b>/help</b> — Full command list`,
+    { parse_mode: 'HTML' }
   );
 });
 
-/** /help */
 bot.help(async (ctx) => {
   await ctx.reply(
-    `*Telecode Commands*\n\n` +
-    `📋 */connect* \`owner/repo\` — Link a GitHub repository\n` +
-    `🔍 */explain* \`<question>\` — Get code explanations (read-only)\n` +
-    `🔎 */search* \`<query>\` — Search for files or code logic\n` +
-    `🗺 */plan* \`<feature>\` — Generate an implementation plan\n` +
-    `⚡ */execute* \`<task>\` — Run an AI code change (creates a branch + PR)\n` +
-    `↩️ */undo* — Revert the last completed task\n` +
-    `📂 */repos* — List your connected repositories\n` +
-    `📜 */tasks* — View recent task history`,
-    { parse_mode: 'Markdown' }
+    `<b>Telecode — Command Reference</b>\n\n` +
+    `<b>Context & Setup:</b>\n` +
+    `📋 <b>/connect</b> [repo] — Link a GitHub repository\n` +
+    `📂 <b>/repos</b> — List linked repositories\n` +
+    `🔑 <b>/sync</b> — Get code for VS Code extension\n\n` +
+    `<b>AI Assistance (Read-only):</b>\n` +
+    `🔍 <b>/explain</b> [query] — Analysis and explanations\n` +
+    `🔎 <b>/search</b> [query] — Find files and logic\n\n` +
+    `<b>AI Operations (Write):</b>\n` +
+    `🗺 <b>/plan</b> [feature] — Create implementation design\n` +
+    `🔧 <b>/fix</b> [issue] — Diagnose and repair bugs\n` +
+    `⚡ <b>/execute</b> [task] — Apply changes and open PR\n\n` +
+    `<b>Management:</b>\n` +
+    `📜 <b>/tasks</b> — Recent execution history\n` +
+    `↩️ <b>/undo</b> — Roll back the last execution`,
+    { parse_mode: 'HTML' }
   );
 });
 
-/** /connect owner/repo — link a GitHub repository */
 bot.command('connect', async (ctx) => {
   const user = await ensureUser(ctx.from.id, ctx.from).catch(() => null);
   if (!user) return ctx.reply('⚠️ Could not register you. Is the server running?');
 
   const arg = ctx.message.text.split(' ').slice(1).join('').trim();
   if (!arg || !arg.includes('/')) {
-    return ctx.reply('Usage: `/connect owner/repo-name`', { parse_mode: 'Markdown' });
+    return ctx.reply('Usage: <code>/connect owner/repo-name</code>', { parse_mode: 'HTML' });
   }
 
-  await ctx.reply(`🔗 Connecting to *${arg}*...`, { parse_mode: 'Markdown' });
+  await ctx.reply(`🔗 Connecting to <b>${arg}</b>...`, { parse_mode: 'HTML' });
 
   try {
     const repo = await api.connectRepo(user.id, arg);
     await ctx.reply(
-      `✅ Connected to *${repo.fullName}*!\nDefault branch: \`${repo.defaultBranch}\`\n\nNow you can use /explain, /plan, or /execute with this repo as context.`,
-      { parse_mode: 'Markdown' }
+      `✅ Connected to <b>${repo.fullName}</b>!\nDefault branch: <code>${repo.defaultBranch}</code>\n\nNow you can use /explain, /plan, /fix, or /execute with this repo as context.`,
+      { parse_mode: 'HTML' }
     );
   } catch (err: any) {
     await ctx.reply(`❌ Failed to connect: ${err?.response?.data?.message ?? err.message}`);
@@ -100,14 +130,14 @@ bot.command('repos', async (ctx) => {
   try {
     const repos = await api.listRepos(user.id);
     if (!repos.length) {
-      return ctx.reply('You have no connected repositories yet.\n\nUse `/connect owner/repo` to add one.', { parse_mode: 'Markdown' });
+      return ctx.reply('You have no connected repositories yet.\n\nUse <code>/connect owner/repo</code> to add one.', { parse_mode: 'HTML' });
     }
 
     const list = repos
-      .map((r: any) => `${r.isActive ? '✅' : '⚪'} \`${r.fullName}\` (${r.defaultBranch})`)
+      .map((r: any) => `${r.isActive ? '✅' : '⚪'} <code>${r.fullName}</code> (${r.defaultBranch})`)
       .join('\n');
 
-    await ctx.reply(`*Your Repositories:*\n\n${list}`, { parse_mode: 'Markdown' });
+    await ctx.reply(`<b>Your Repositories:</b>\n\n${list}`, { parse_mode: 'HTML' });
   } catch {
     await ctx.reply('❌ Could not fetch repositories. Is the server running?');
   }
@@ -122,7 +152,7 @@ bot.command('search', async (ctx) => {
 
   const activeRepo = await api.getActiveRepo(user.id).catch(() => null);
 
-  await ctx.reply(`🔎 *Search mode* — hunting for information...\n\n_"${prompt}"_`, { parse_mode: 'Markdown' });
+  await ctx.reply(`🔎 <b>Search mode</b> — hunting for information...\n\n<i>"${prompt}"</i>`, { parse_mode: 'HTML' });
 
   try {
     if (!ctx.chat) return;
@@ -135,9 +165,9 @@ bot.command('search', async (ctx) => {
       chatId: String(ctx.chat.id),
     });
     await ctx.reply(
-      `🔍 *Phase 2: Knowledge Extraction* — ID: \`${task.id}\`\n` +
-      `_(The AI is searching the repository. I'll post the results here shortly.)_`,
-      { parse_mode: 'Markdown' }
+      `🔍 <b>Phase 2: Analysis</b> — ID: <code>${task.id}</code>\n\n` +
+      `<i>The AI is searching the codebase. Results will appear shortly.</i>`,
+      { parse_mode: 'HTML' }
     );
   } catch (err: any) {
     await ctx.reply(`❌ Error: ${err?.response?.data?.message ?? err.message}`);
@@ -154,7 +184,7 @@ bot.command('explain', async (ctx) => {
 
   const activeRepo = await api.getActiveRepo(user.id).catch(() => null);
 
-  await ctx.reply(`🔍 *Explain mode* — analysing your question...\n\n_"${prompt}"_`, { parse_mode: 'Markdown' });
+  await ctx.reply(`🔍 <b>Explain mode</b> — analysing your question...\n\n<i>"${prompt}"</i>`, { parse_mode: 'HTML' });
 
   try {
     if (!ctx.chat) return;
@@ -167,11 +197,49 @@ bot.command('explain', async (ctx) => {
       chatId: String(ctx.chat.id),
     });
     await ctx.reply(
-      `🧠 *Phase 2: Knowledge Extraction* — ID: \`${task.id}\`\n` +
-      `_(AI worker is analyzing your question. I'll post the response here once ready.)_`,
-      { parse_mode: 'Markdown' }
+      `🧠 <b>Phase 2: Reasoning</b> — ID: <code>${task.id}</code>\n\n` +
+      `<i>The AI is analyzing your question. Response incoming...</i>`,
+      { parse_mode: 'HTML' }
     );
   } catch (err: any) {
+    await ctx.reply(`❌ Error: ${err?.response?.data?.message ?? err.message}`);
+  }
+});
+
+bot.command('fix', async (ctx) => {
+  const prompt = ctx.message.text.split(' ').slice(1).join(' ').trim();
+  if (!prompt) return ctx.reply('Usage: <code>/fix <issue description></code>', { parse_mode: 'HTML' });
+
+  const user = await ensureUser(ctx.from.id, ctx.from).catch(() => null);
+  if (!user) return ctx.reply('⚠️ Could not reach the server.');
+
+  const activeRepo = await api.getActiveRepo(user.id).catch(() => null);
+  if (!activeRepo) {
+    return ctx.reply('⚠️ No active repository. Use <code>/connect owner/repo</code> first.', { parse_mode: 'HTML' });
+  }
+
+  await ctx.reply(
+    `🔧 <b>Fix mode</b> — diagnosing and preparing fix...\n\n<i>"${prompt}"</i>\n\nRepo: <code>${activeRepo.fullName}</code>`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    if (!ctx.chat) return;
+    const task = await api.submitTask({
+      userId: user.id,
+      repositoryId: activeRepo.id,
+      mode: 'FIX',
+      prompt,
+      botToken,
+      chatId: String(ctx.chat.id),
+    });
+    await ctx.reply(
+      `🛠 <b>Phase 2: Diagnosis</b> — ID: <code>${task.id}</code>\n\n` +
+      `<i>The AI is investigating the issue and preparing a fix.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err: any) {
+    console.error('Fix command error:', err);
     await ctx.reply(`❌ Error: ${err?.response?.data?.message ?? err.message}`);
   }
 });
@@ -190,8 +258,8 @@ bot.command('plan', async (ctx) => {
   }
 
   await ctx.reply(
-    `🗺 *Plan mode* — building implementation strategy...\n\n_"${prompt}"_\n\nRepo: \`${activeRepo.fullName}\``,
-    { parse_mode: 'Markdown' }
+    `🗺 <b>Plan mode</b> — building implementation strategy...\n\n<i>"${prompt}"</i>\n\nRepo: <code>${activeRepo.fullName}</code>`,
+    { parse_mode: 'HTML' }
   );
 
   try {
@@ -205,9 +273,9 @@ bot.command('plan', async (ctx) => {
       chatId: String(ctx.chat.id),
     });
     await ctx.reply(
-      `📋 *Phase 3: Planning* — ID: \`${task.id}\`\n` +
-      `_(The implementation strategy is being generated. Hang tight!)_`,
-      { parse_mode: 'Markdown' }
+      `📋 <b>Phase 3: Planning</b> — ID: <code>${task.id}</code>\n` +
+      `<i>(The implementation strategy is being generated. Hang tight!)</i>`,
+      { parse_mode: 'HTML' }
     );
   } catch (err: any) {
     await ctx.reply(`❌ Error: ${err?.response?.data?.message ?? err.message}`);
@@ -227,30 +295,48 @@ bot.command('execute', async (ctx) => {
     return ctx.reply('⚠️ No active repository. Use `/connect owner/repo` first.', { parse_mode: 'Markdown' });
   }
 
+  // Store prompt in memory to avoid 64-byte callback_data limit
+  const pendingId = crypto.randomUUID();
+  pendingExecutions.set(pendingId, {
+    userId: user.id,
+    repositoryId: activeRepo.id,
+    prompt,
+  });
+
   // Confirm before executing
   await ctx.reply(
-    `⚡ *Execute mode* — I will make code changes to \`${activeRepo.fullName}\`.\n\n` +
-    `Task: _"${prompt}"_\n\n` +
+    `⚡ <b>Execute mode</b> — I will make code changes to <code>${activeRepo.fullName}</code>.\n\n` +
+    `Task: <i>"${prompt}"</i>\n\n` +
     `This will create a new branch and open a PR. Confirm?`,
     {
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        Markup.button.callback('✅ Confirm', `exec_confirm:${user.id}:${activeRepo.id}:${encodeURIComponent(prompt)}`),
-        Markup.button.callback('❌ Cancel', 'exec_cancel'),
+        Markup.button.callback('✅ Confirm', `exec_confirm:${pendingId}`),
+        Markup.button.callback('❌ Cancel', `exec_cancel:${pendingId}`),
       ]),
     }
   );
 });
 
-bot.action('exec_cancel', async (ctx) => {
+bot.action(/^exec_cancel:(.+)$/, async (ctx) => {
+  const pendingId = ctx.match[1];
+  pendingExecutions.delete(pendingId);
   await ctx.answerCbQuery('Cancelled.');
   await ctx.editMessageText('❌ Execution cancelled.');
 });
 
-bot.action(/^exec_confirm:(.+):(.+):(.+)$/, async (ctx) => {
+bot.action(/^exec_confirm:(.+)$/, async (ctx) => {
+  const pendingId = ctx.match[1];
+  const pending = pendingExecutions.get(pendingId);
+
+  if (!pending) {
+    await ctx.answerCbQuery('Error: session expired.');
+    return ctx.editMessageText('❌ Error: This confirmation link has expired or is invalid.');
+  }
+
   await ctx.answerCbQuery('Submitting...');
-  const [, userId, repositoryId, encodedPrompt] = ctx.match;
-  const prompt = decodeURIComponent(encodedPrompt);
+  const { userId, repositoryId, prompt } = pending;
+  pendingExecutions.delete(pendingId); // Clean up
 
   try {
     if (!ctx.chat) return;
@@ -263,8 +349,9 @@ bot.action(/^exec_confirm:(.+):(.+):(.+)$/, async (ctx) => {
       chatId: String(ctx.chat.id),
     });
     await ctx.editMessageText(
-      `⚡ *Phase 3: Actionable AI* initiated!\nID: \`${task.id}\`\n\n_(The AI is preparing code changes and creating a PR. You'll be notified when it's live.)_`,
-      { parse_mode: 'Markdown' }
+      `⚡ <b>Phase 3: Execution</b> — ID: <code>${task.id}</code>\n\n` +
+      `<i>AI is applying changes and opening a PR. You'll be notified when it's live.</i>`,
+      { parse_mode: 'HTML' }
     );
   } catch (err: any) {
     await ctx.editMessageText(`❌ Error: ${err?.response?.data?.message ?? err.message}`);
@@ -279,8 +366,8 @@ bot.command('undo', async (ctx) => {
   try {
     const task = await api.rollbackLastTask(user.id);
     await ctx.reply(
-      `↩️ Task \`${task.id}\` rolled back.\nStatus: \`${task.status}\``,
-      { parse_mode: 'Markdown' }
+      `↩️ Task <code>${task.id}</code> rolled back.\nStatus: <code>${task.status}</code>`,
+      { parse_mode: 'HTML' }
     );
   } catch (err: any) {
     await ctx.reply(`❌ ${err?.response?.data?.message ?? err.message}`);
@@ -295,10 +382,10 @@ bot.command('sync', async (ctx) => {
   try {
     const code = await api.generateSyncCode(user.id);
     await ctx.reply(
-      `🔑 Your sync code: \`${code}\`\n\n` +
+      `🔑 Your sync code: <code>${code}</code>\n\n` +
       `Enter this code in your VS Code Telecode extension to link your account.\n` +
       `This code will expire in 10 minutes.`,
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'HTML' }
     );
   } catch (err: any) {
     await ctx.reply(`❌ Failed to generate code: ${err?.response?.data?.message ?? err.message}`);
@@ -317,11 +404,11 @@ bot.command('tasks', async (ctx) => {
     const list = tasks
       .slice(0, 5)
       .map((t: any, i: number) =>
-        `${i + 1}. [${t.mode}] \`${t.status}\` — ${t.prompt.slice(0, 50)}...`
+        `${i + 1}. [${t.mode}] <code>${t.status}</code> — ${t.prompt.slice(0, 50)}...`
       )
       .join('\n');
 
-    await ctx.reply(`*Recent Tasks:*\n\n${list}`, { parse_mode: 'Markdown' });
+    await ctx.reply(`<b>Recent Tasks:</b>\n\n${list}`, { parse_mode: 'HTML' });
   } catch {
     await ctx.reply('❌ Could not fetch tasks.');
   }
@@ -338,10 +425,10 @@ bot.on(message('text'), async (ctx) => {
   const activeRepo = await api.getActiveRepo(user.id).catch(() => null);
 
   await ctx.reply(
-    `💬 Got it! Treating this as an *explain* request...\n\n` +
-    `${activeRepo ? `Repo: \`${activeRepo.fullName}\`` : '_(No active repo — use /connect to link one)_'}\n\n` +
-    `Use /explain, /plan, or /execute to be more specific.`,
-    { parse_mode: 'Markdown' }
+    `💬 Treating this as an <b>Explain</b> request...\n\n` +
+    `${activeRepo ? `Repo: <code>${activeRepo.fullName}</code>` : '<i>(No active repo — link one with /connect)</i>'}\n\n` +
+    `💡 <i>Tip: Use /fix or /plan for deeper tasks.</i>`,
+    { parse_mode: 'HTML' }
   );
 
   try {
@@ -360,13 +447,59 @@ bot.on(message('text'), async (ctx) => {
 });
 
 // ─── Launch ──────────────────────────────────────────────────────────────────
-console.log('⏳ Launching bot...');
-bot.launch().then(() => {
-  console.log('🤖 Telecode Bot is running!');
-}).catch((err) => {
-  console.error('❌ Failed to launch bot:', err);
-  process.exit(1);
-});
+async function launch() {
+  try {
+    console.log('🔍 Verifying server connection...');
+    try {
+      // Simple ping to server
+      await api.getUser('test').catch(() => null); 
+      console.log('✅ Server connection established.');
+    } catch (e) {
+      console.warn('⚠️ Could not connect to server. Commands might fail.');
+    }
+
+    console.log('🔍 Verifying bot token with Telegram...');
+    const me = await bot.telegram.getMe();
+    console.log(`✅ Token verified! Bot name: ${me.first_name} (@${me.username})`);
+
+    console.log('📜 Registering bot commands...');
+    await bot.telegram.setMyCommands([
+      { command: 'start', description: 'Begin your journey with Telecode' },
+      { command: 'connect', description: 'Link a GitHub repository' },
+      { command: 'repos', description: 'List your connected repositories' },
+      { command: 'explain', description: 'Understand code or concepts' },
+      { command: 'search', description: 'Hunt for logic in your codebase' },
+      { command: 'plan', description: 'Strategy for a new feature' },
+      { command: 'fix', description: 'Diagnose and fix bugs' },
+      { command: 'execute', description: 'Apply code changes & open PR' },
+      { command: 'tasks', description: 'View recent execution history' },
+      { command: 'sync', description: 'Get code for VS Code extension' },
+      { command: 'undo', description: 'Roll back the last execution' },
+      { command: 'help', description: 'Show full command reference' },
+    ]);
+    console.log('✅ Commands registered.');
+
+    console.log('⏳ Starting polling...');
+    bot.launch({ dropPendingUpdates: true }).then(() => {
+       console.log('🤖 Telecode Bot polling started successfully!');
+    }).catch(err => {
+       console.error('❌ Bot launch error:', err);
+    });
+
+    console.log('🤖 Telecode Bot script is active. Send a message to the bot on Telegram!');
+  } catch (err: any) {
+    console.error('❌ Failed to initialize bot:');
+    if (err.response) {
+      console.error(`   Status: ${err.response.error_code}`);
+      console.error(`   Description: ${err.response.description}`);
+    } else {
+      console.error(`   Error: ${err.message}`);
+    }
+    process.exit(1);
+  }
+}
+
+launch();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

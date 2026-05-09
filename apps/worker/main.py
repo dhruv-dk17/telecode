@@ -78,9 +78,9 @@ async def _run_task(req: ProcessTaskRequest, bot_token: str, chat_id: str) -> No
         commit_message: str = ai_result.get("commit_message", "feat: telecode update")
         files: list[dict] = ai_result.get("files", [])
 
-        # 3. If EXECUTE and we have files, push to GitHub
+        # 3. If EXECUTE/FIX and we have files, push to GitHub
         pr_url: str | None = None
-        if req.mode.value == "EXECUTE" and files and req.repo_full_name:
+        if req.mode in [TaskMode.EXECUTE, TaskMode.FIX] and files and req.repo_full_name:
             gh = GitHubClient()
             try:
                 # Create branch
@@ -108,8 +108,9 @@ async def _run_task(req: ProcessTaskRequest, bot_token: str, chat_id: str) -> No
                     base=req.repo_default_branch or "main"
                 )
                 
-                # Append PR link to the result
-                result_text += f"\n\nChanges pushed!\nPR URL: {pr_url}"
+                # In Phase 3, we don't append to result_text manually anymore.
+                # The send_result function handles the PR link display.
+                pass
                 
             except Exception as gh_err:
                 print(f"[Worker] GitHub operation failed: {gh_err}")
@@ -130,6 +131,7 @@ async def _run_task(req: ProcessTaskRequest, bot_token: str, chat_id: str) -> No
                 task_mode=req.mode.value,
                 result=result_text,
                 branch_name=branch_name,
+                pr_url=pr_url,
             )
 
     except Exception as exc:

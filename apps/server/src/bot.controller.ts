@@ -211,8 +211,8 @@ export class BotController {
       try {
         await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           chat_id: user.telegramId,
-          text: `✅ *Sync Successful!*\n\nYour VS Code extension is now connected to this account. You can start sending tasks from your editor.`,
-          parse_mode: 'Markdown',
+          text: `✅ <b>Sync Successful!</b>\n\nYour VS Code extension is now connected to this account. You can start sending tasks from your editor.`,
+          parse_mode: 'HTML',
         });
       } catch (err) {
         console.error('Failed to send Telegram notification:', err.response?.data || err.message);
